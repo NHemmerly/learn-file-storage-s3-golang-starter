@@ -70,8 +70,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "could not copy video to temp", err)
 		return
 	}
+	processedFileName, err := processVideoForFastStart(videoFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "server error", err)
+		return
+	}
+	processedFile, err := os.Open(processedFileName)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "could not retrieve video", err)
+		return
+	}
 	videoFile.Seek(0, io.SeekStart)
-	aspectRatio, err := getVideoAspectRatio(videoFile.Name())
+	aspectRatio, err := getVideoAspectRatio(processedFileName)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "could not get video aspect ratio", err)
 		return
@@ -93,14 +103,24 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	input := &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &keyName,
-		Body:        videoFile,
+		Body:        processedFile,
 		ContentType: &mediaType,
 	}
 	cfg.s3Client.PutObject(r.Context(), input)
-	newVidUrl := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, keyName)
+	//newVidUrl := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, keyName)
+	//newVidUrl := fmt.Sprintf("%s,%s", cfg.s3Bucket, keyName)
+	newVidUrl := fmt.Sprintf("%s/%s", cfg.s3CfDistribution, keyName)
 	vidMeta.VideoURL = &newVidUrl
 	if err := cfg.db.UpdateVideo(vidMeta); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "server error", err)
 		return
 	}
+	/*
+		vidMeta, err = cfg.dbVideoToSignedVideo(vidMeta)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "could not update vidURL", err)
+			return
+		}
+	*/
+	respondWithJSON(w, http.StatusOK, vidMeta.VideoURL)
 }
